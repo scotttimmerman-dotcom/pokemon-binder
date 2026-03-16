@@ -8,28 +8,22 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query } from 'firebase/firestore';
 
-// Safely retrieve Next.js environment variables at build-time, 
-// while preventing "process is not defined" crashes in the live sandbox.
-let firebaseEnv = {};
-let geminiEnvKey = '';
+// Safely retrieve Next.js environment variables at build-time.
+// Using "typeof process" prevents ReferenceErrors in the Canvas preview sandbox.
+const isSandbox = typeof __firebase_config !== 'undefined';
 
-try {
-  firebaseEnv = {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
-  };
-  geminiEnvKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-} catch (error) {
-  // Ignored in browser sandbox preview
-}
+const firebaseEnv = {
+  apiKey: typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_FIREBASE_API_KEY : '',
+  authDomain: typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN : '',
+  projectId: typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID : '',
+  storageBucket: typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET : '',
+  messagingSenderId: typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID : '',
+  appId: typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_FIREBASE_APP_ID : ''
+};
+const geminiEnvKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : '';
 
 // Support both the Canvas sandbox preview and the Vercel live app
-const sandboxFirebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-const firebaseConfig = sandboxFirebaseConfig || firebaseEnv;
+const firebaseConfig = isSandbox ? JSON.parse(__firebase_config) : firebaseEnv;
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -40,7 +34,6 @@ const sandboxAppId = typeof __app_id !== 'undefined' ? __app_id : undefined;
 const appId = sandboxAppId || 'pokemon-binder-app';
 
 // --- API Configurations ---
-const isSandbox = typeof __firebase_config !== 'undefined';
 const GEMINI_API_KEY = isSandbox ? "" : geminiEnvKey;
 const GEMINI_URL = isSandbox 
   ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`
@@ -105,8 +98,9 @@ export default function App() {
   const logout = () => signOut(auth);
 
   useEffect(() => {
-    // Hidden auto-login for the Canvas Sandbox preview window.
+    // Hidden auto-login exclusively for the Canvas Sandbox preview window to prevent errors.
     const initSandboxAuth = async () => {
+      if (!isSandbox) return; // Completely skips this step on your live Vercel site
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
