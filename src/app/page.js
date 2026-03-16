@@ -178,25 +178,38 @@ export default function App() {
       
       try {
         // Attempt 1: Direct fetch to the Pokémon API
-        const headers = POKEMON_API_KEY ? { 'X-Api-Key': POKEMON_API_KEY } : {};
-        const response = await fetch(targetUrl, { headers });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
         
-        if (!response.ok) {
-          throw new Error(`Direct fetch status: ${response.status}`);
-        }
+        const response = await fetch(targetUrl, { 
+          signal: controller.signal 
+        });
+        
+        clearTimeout(timeoutId);
+        if (!response.ok) throw new Error(`Status: ${response.status}`);
         data = await response.json();
         
       } catch (primaryErr) {
-        console.warn("Direct API fetch blocked. Attempting secure proxy routing...", primaryErr);
+        console.warn("Direct API fetch failed. Attempting primary proxy...", primaryErr);
         
-        // Attempt 2: CORS Proxy to bypass aggressive browser blockers
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-        const proxyResponse = await fetch(proxyUrl);
-        
-        if (!proxyResponse.ok) {
-          throw new Error(`Proxy fetch status: ${proxyResponse.status}`);
+        try {
+          // Attempt 2: Primary CORS Proxy (corsproxy.io)
+          const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+          const proxyResponse = await fetch(proxyUrl);
+          
+          if (!proxyResponse.ok) throw new Error(`Proxy 1 status: ${proxyResponse.status}`);
+          data = await proxyResponse.json();
+          
+        } catch (secondaryErr) {
+          console.warn("Primary proxy failed. Attempting secondary proxy...", secondaryErr);
+          
+          // Attempt 3: Secondary CORS Proxy (allorigins)
+          const backupProxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+          const backupResponse = await fetch(backupProxyUrl);
+          
+          if (!backupResponse.ok) throw new Error(`Proxy 2 status: ${backupResponse.status}`);
+          data = await backupResponse.json();
         }
-        data = await proxyResponse.json();
       }
       
       setCards(data.data || []);
@@ -205,9 +218,8 @@ export default function App() {
         setError("No cards found. Try a different search.");
       }
     } catch (err) {
-      console.error("Both Direct and Proxy API fetches failed:", err);
+      console.error("All API fetch attempts failed:", err);
       
-      // Attempt 3: Final Fallback to Mock Data
       let filteredMocks = MOCK_CARDS;
       if (searchQuery) {
         filteredMocks = filteredMocks.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -217,13 +229,7 @@ export default function App() {
       }
       
       setCards(filteredMocks);
-      
-      if (filteredMocks.length === 0) {
-        setError("Live connection failed, and no sample cards matched your search criteria.");
-      } else {
-        // Now dynamically showing you exactly what error caused it to fail
-        setError(`API blocked (${err.message}). Showing sample data for testing!`);
-      }
+      setError(`API connection issue (${err.message}). Showing sample data for now!`);
     } finally {
       setIsLoading(false);
     }
