@@ -8,7 +8,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query } from 'firebase/firestore';
 
-// Safely retrieve Next.js environment variables at build-time.
+// Safely retrieve Next.js environment variables.
 const isSandbox = typeof __firebase_config !== 'undefined';
 
 const firebaseEnv = {
@@ -50,20 +50,6 @@ const MOCK_CARDS = [
   { id: 'swsh4-138', name: 'Rayquaza', set: { name: 'Vivid Voltage' }, images: { small: 'https://images.pokemontcg.io/swsh4/138.png', large: 'https://images.pokemontcg.io/swsh4/138_hires.png' }, tcgplayer: { prices: { normal: { market: 8.50 } } }, types: ['Colorless'] },
   { id: 'swsh1-141', name: 'Snorlax', set: { name: 'Sword & Shield' }, images: { small: 'https://images.pokemontcg.io/swsh1/141.png', large: 'https://images.pokemontcg.io/swsh1/141_hires.png' }, tcgplayer: { prices: { normal: { market: 12.00 } } }, types: ['Colorless'] },
 ];
-
-// Helper for strict timeouts to prevent "endless spinning"
-const fetchWithTimeout = async (url, options = {}, timeout = 4000) => {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(id);
-    return response;
-  } catch (err) {
-    clearTimeout(id);
-    throw err;
-  }
-};
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -138,7 +124,7 @@ export default function App() {
     };
   }, [user]);
 
-  // Linear, robust search with timeouts
+  // Robust Search Logic
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     setIsLoading(true);
@@ -152,43 +138,34 @@ export default function App() {
     const qParam = queryParts.join(' ');
     const targetUrl = `https://api.pokemontcg.io/v2/cards?pageSize=24${qParam ? `&q=${encodeURIComponent(qParam)}` : ''}`;
     
-    let resultData = null;
-
-    // Level 1: Direct Fetch (No headers to avoid CORS Preflight)
     try {
-      const res = await fetchWithTimeout(targetUrl, {}, 3500);
-      if (res.ok) resultData = await res.json();
-    } catch (e) { console.warn("Direct fetch failed."); }
+      // Step 1: Use a JSON Wrapper Proxy (AllOrigins) 
+      // This is the most reliable way to bypass CORS in a live browser app.
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+      const response = await fetch(proxyUrl);
+      
+      if (!response.ok) throw new Error("Connection failed");
+      
+      const wrapper = await response.json();
+      const data = JSON.parse(wrapper.contents);
 
-    // Level 2: Primary Proxy (CorsProxy.io)
-    if (!resultData) {
-      try {
-        const res = await fetchWithTimeout(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {}, 3500);
-        if (res.ok) resultData = await res.json();
-      } catch (e) { console.warn("Primary proxy failed."); }
-    }
-
-    // Level 3: Backup Proxy (AllOrigins Raw)
-    if (!resultData) {
-      try {
-        const res = await fetchWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`, {}, 3500);
-        if (res.ok) resultData = await res.json();
-      } catch (e) { console.warn("Backup proxy failed."); }
-    }
-
-    if (resultData && resultData.data) {
-      setCards(resultData.data);
-      if (resultData.data.length === 0) setError("No cards found for that search.");
-      setIsLoading(false);
-    } else {
-      // Level 4: Mock Fallback
-      console.error("All live sources failed. Using mock data.");
+      if (data && data.data) {
+        setCards(data.data);
+        if (data.data.length === 0) setError("No cards found for that search.");
+      } else {
+        throw new Error("Invalid format");
+      }
+    } catch (err) {
+      console.error("Live fetch failed:", err);
+      
+      // Step 2: Graceful Mock Fallback
       let filteredMocks = MOCK_CARDS;
       if (searchQuery) filteredMocks = filteredMocks.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
       if (selectedType) filteredMocks = filteredMocks.filter(c => c.types.includes(selectedType));
       
       setCards(filteredMocks);
-      setError("Live API currently unreachable. Showing sample collection!");
+      setError("API connection issue. Showing sample cards for now!");
+    } finally {
       setIsLoading(false);
     }
   };
