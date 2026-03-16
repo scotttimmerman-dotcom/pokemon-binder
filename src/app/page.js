@@ -5,29 +5,46 @@ import { Search, BookHeart, Library, Loader2, Plus, Trash2, DollarSign, Heart, X
 
 // --- Firebase Initialization ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query } from 'firebase/firestore';
 
-// Explicitly defining process.env so Next.js/Vercel can inject them at build time!
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
-};
+// Safely retrieve Next.js environment variables at build-time, 
+// while preventing "process is not defined" crashes in the live sandbox.
+let firebaseEnv = {};
+let geminiEnvKey = '';
+
+try {
+  firebaseEnv = {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
+  };
+  geminiEnvKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+} catch (error) {
+  // Ignored in browser sandbox preview
+}
+
+// Support both the Canvas sandbox preview and the Vercel live app
+const sandboxFirebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+const firebaseConfig = sandboxFirebaseConfig || firebaseEnv;
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 const db = getFirestore(app);
-const appId = 'pokemon-binder-app';
+
+const sandboxAppId = typeof __app_id !== 'undefined' ? __app_id : undefined;
+const appId = sandboxAppId || 'pokemon-binder-app';
 
 // --- API Configurations ---
-const POKEMON_API_KEY = process.env.NEXT_PUBLIC_POKEMON_API_KEY || '59b12420-8078-41b2-833b-2d9ae8a4b80d';
-const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+const isSandbox = typeof __firebase_config !== 'undefined';
+const GEMINI_API_KEY = isSandbox ? "" : geminiEnvKey;
+const GEMINI_URL = isSandbox 
+  ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`
+  : `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 const POKEMON_TYPES = ['Colorless', 'Darkness', 'Dragon', 'Fairy', 'Fighting', 'Fire', 'Grass', 'Lightning', 'Metal', 'Psychic', 'Water'];
 
 // --- Fallback Data ---
@@ -59,32 +76,24 @@ const fetchWithRetry = async (url, options, retries = 5) => {
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('search'); // 'search' | 'binder' | 'wishlist'
+  const [view, setView] = useState('search'); 
   
-  // Search State
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [cards, setCards] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Binder State
   const [binderCards, setBinderCards] = useState([]);
-
-  // Wishlist State
   const [wishlistCards, setWishlistCards] = useState([]);
-
-  // Modal State
   const [selectedCard, setSelectedCard] = useState(null);
 
-  // Gemini State
   const [isLoreLoading, setIsLoreLoading] = useState(false);
   const [cardLore, setCardLore] = useState('');
-  
   const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
   const [binderAnalysis, setBinderAnalysis] = useState('');
 
-  // 1. Initialize Authentication (Google Login)
+  // 1. Initialize Authentication
   const loginWithGoogle = async () => {
     try {
       await signInWithPopup(auth, provider);
@@ -96,6 +105,20 @@ export default function App() {
   const logout = () => signOut(auth);
 
   useEffect(() => {
+    // Hidden auto-login for the Canvas Sandbox preview window.
+    const initSandboxAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.warn("Sandbox Auth skipped:", err);
+      }
+    };
+    initSandboxAuth();
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
@@ -155,6 +178,7 @@ export default function App() {
       const qParam = queryParts.join(' ');
       const targetUrl = `https://api.pokemontcg.io/v2/cards?pageSize=24${qParam ? `&q=${encodeURIComponent(qParam)}` : ''}`;
       
+      // CORS FIX: Simple fetch with no headers
       const response = await fetch(targetUrl);
       
       if (!response.ok) {
