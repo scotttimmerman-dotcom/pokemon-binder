@@ -3,51 +3,31 @@
 import React, { useState, useEffect } from 'react';
 import { Search, BookHeart, Library, Loader2, Plus, Trash2, DollarSign, Heart, X, Sparkles } from 'lucide-react';
 
-// --- Safe Environment Helper ---
-// This prevents the "process is not defined" error when previewing in the browser sandbox,
-// while still correctly reading your .env.local variables when you run Next.js locally.
-const safeGetEnv = (key) => {
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env[key];
-  }
-  return '';
-};
-
 // --- Firebase Initialization ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query } from 'firebase/firestore';
 
-// Gracefully fall back to the injected sandbox config if we are in the Canvas preview!
-const sandboxFirebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-
-const firebaseConfig = sandboxFirebaseConfig || {
-  apiKey: safeGetEnv('NEXT_PUBLIC_FIREBASE_API_KEY'),
-  authDomain: safeGetEnv('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN'),
-  projectId: safeGetEnv('NEXT_PUBLIC_FIREBASE_PROJECT_ID'),
-  storageBucket: safeGetEnv('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET'),
-  messagingSenderId: safeGetEnv('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID'),
-  appId: safeGetEnv('NEXT_PUBLIC_FIREBASE_APP_ID')
+// Explicitly defining process.env so Next.js/Vercel can inject them at build time!
+const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 const db = getFirestore(app);
-
-// Use sandbox app ID if available, otherwise fallback to local hardcoded ID
-const sandboxAppId = typeof __app_id !== 'undefined' ? __app_id : undefined;
-const appId = sandboxAppId || 'pokemon-binder-app';
+const appId = 'pokemon-binder-app';
 
 // --- API Configurations ---
-const POKEMON_API_KEY = safeGetEnv('NEXT_PUBLIC_POKEMON_API_KEY') || '59b12420-8078-41b2-833b-2d9ae8a4b80d';
-
-// The Gemini API key will be injected automatically in the Canvas environment,
-// or loaded from your .env.local file when running locally.
-const canvasGeminiKey = ""; 
-const GEMINI_API_KEY = canvasGeminiKey || safeGetEnv('NEXT_PUBLIC_GEMINI_API_KEY');
-// Using the specific model required for the sandbox preview environment:
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+const POKEMON_API_KEY = process.env.NEXT_PUBLIC_POKEMON_API_KEY || '59b12420-8078-41b2-833b-2d9ae8a4b80d';
+const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 const POKEMON_TYPES = ['Colorless', 'Darkness', 'Dragon', 'Fairy', 'Fighting', 'Fire', 'Grass', 'Lightning', 'Metal', 'Psychic', 'Water'];
 
 // --- Fallback Data ---
@@ -116,19 +96,6 @@ export default function App() {
   const logout = () => signOut(auth);
 
   useEffect(() => {
-    // Hidden auto-login for the Canvas Sandbox. This ensures your Firebase requests
-    // don't fail due to permission errors when you are just previewing it here.
-    const initSandboxAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        }
-      } catch (err) {
-        console.error("Sandbox Auth error:", err);
-      }
-    };
-    initSandboxAuth();
-
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
@@ -310,6 +277,10 @@ export default function App() {
 
   // 5. Gemini AI Features
   const askGeminiAboutCard = async (card) => {
+    if (!GEMINI_API_KEY) {
+      setCardLore("Error: Gemini API key is not configured.");
+      return;
+    }
     setIsLoreLoading(true);
     setCardLore('');
     try {
@@ -335,6 +306,10 @@ export default function App() {
   };
 
   const analyzeMyBinder = async () => {
+    if (!GEMINI_API_KEY) {
+      setBinderAnalysis("Error: Gemini API key is not configured.");
+      return;
+    }
     if (binderCards.length === 0) return;
     setIsAnalysisLoading(true);
     setBinderAnalysis('');
