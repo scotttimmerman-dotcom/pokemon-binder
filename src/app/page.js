@@ -164,48 +164,32 @@ export default function App() {
     if (activeType) queryParts.push(`types:${activeType}`);
 
     const qParam = queryParts.join(' ');
-    const targetUrl = `https://api.pokemontcg.io/v2/cards?pageSize=24&orderBy=-set.releaseDate${qParam ? `&q=${encodeURIComponent(qParam)}` : ''}`;
+    const targetUrl = `/api/pokemon${qParam ? `?q=${encodeURIComponent(qParam)}` : ''}`;
 
     // --- FIX 1 applied here: X-Api-Key header is now sent ---
     const authHeaders = { 'X-Api-Key': POKEMON_API_KEY };
 
     let resultData = null;
 
-    // Level 1: Direct fetch with auth header (should work in most environments)
-    try {
-      const res = await fetchWithTimeout(targetUrl, { headers: authHeaders }, 5000);
-      if (res.ok) resultData = await res.json();
-      else console.warn(`Direct fetch returned status ${res.status}`);
-    } catch (e) {
-      console.warn('Direct fetch failed:', e.message);
-    }
+   try {
+  const res = await fetchWithTimeout(targetUrl, {}, 5000);
+  if (res.ok) {
+    resultData = await res.json();
+  }
+} catch (e) {
+  console.warn('Fetch failed:', e.message);
+}
 
-    // Level 2: Proxy fallback (headers can't be forwarded, but authenticated direct should succeed first)
-    if (!resultData) {
-      try {
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl + `&apiKey=${POKEMON_API_KEY}`)}`;
-        const res = await fetchWithTimeout(proxyUrl, {}, 6000);
-        if (res.ok) {
-          const wrapper = await res.json();
-          resultData = JSON.parse(wrapper.contents);
-        }
-      } catch (e) {
-        console.warn('Proxy fetch failed:', e.message);
-      }
-    }
-
-    if (resultData?.data) {
-      setCards(resultData.data);
-      if (resultData.data.length === 0) setError('No cards found. Try a different search!');
-    } else {
-      // Final fallback: mock data
-      console.error('All live sources failed. Falling back to mock data.');
-      let filtered = MOCK_CARDS;
-      if (cleanQuery) filtered = filtered.filter(c => c.name.toLowerCase().includes(cleanQuery.toLowerCase()));
-      if (activeType) filtered = filtered.filter(c => c.types.includes(activeType));
-      setCards(filtered);
-      setError('Live API unreachable. Showing sample collection.');
-    }
+if (resultData?.data) {
+  setCards(resultData.data);
+  if (resultData.data.length === 0) setError('No cards found. Try a different search!');
+} else {
+  let filtered = MOCK_CARDS;
+  if (cleanQuery) filtered = filtered.filter(c => c.name.toLowerCase().includes(cleanQuery.toLowerCase()));
+  if (activeType) filtered = filtered.filter(c => c.types.includes(activeType));
+  setCards(filtered);
+  setError('Live API unreachable. Showing sample collection.');
+}
 
     setIsLoading(false);
   }, [searchQuery, selectedType]);
