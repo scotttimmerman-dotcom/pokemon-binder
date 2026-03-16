@@ -155,12 +155,7 @@ export default function App() {
       const qParam = queryParts.join(' ');
       const targetUrl = `https://api.pokemontcg.io/v2/cards?pageSize=24${qParam ? `&q=${encodeURIComponent(qParam)}` : ''}`;
       
-      const response = await fetch(targetUrl, {
-        method: 'GET',
-        headers: {
-          'X-Api-Key': POKEMON_API_KEY
-        }
-      });
+      const response = await fetch(targetUrl);
       
       if (!response.ok) {
         throw new Error(`API returned status: ${response.status}`);
