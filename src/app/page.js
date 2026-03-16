@@ -29,7 +29,7 @@ const db = getFirestore(app);
 const appId = (typeof __app_id !== 'undefined' ? __app_id : undefined) || 'pokemon-binder-app';
 
 // --- FIX 1: API key is now actually passed in request headers ---
-const POKEMON_API_KEY = '59b12420-8078-41b2-833b-2d9ae8a4b80d';
+
 const GEMINI_API_KEY = isSandbox ? '' : geminiEnvKey;
 
 // --- FIX 2: Only build Gemini URL if key exists ---
@@ -167,12 +167,12 @@ export default function App() {
     const targetUrl = `/api/pokemon${qParam ? `?q=${encodeURIComponent(qParam)}` : ''}`;
 
     // --- FIX 1 applied here: X-Api-Key header is now sent ---
-    const authHeaders = { 'X-Api-Key': POKEMON_API_KEY };
+   
 
     let resultData = null;
 
    try {
-  const res = await fetchWithTimeout(targetUrl, {}, 5000);
+  const res = await fetch(targetUrl);
   if (res.ok) {
     resultData = await res.json();
   }
