@@ -102,7 +102,7 @@ export default function App() {
   useEffect(() => {
     // Hidden auto-login exclusively for the Canvas Sandbox preview window to prevent errors.
     const initSandboxAuth = async () => {
-      if (!isSandbox) return; // Completely skips this step on your live Vercel site
+      if (!isSandbox) return; 
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
@@ -155,7 +155,7 @@ export default function App() {
     };
   }, [user]);
 
-  // 3. Search Pokemon API with Proxy Fallback
+  // 3. Search Pokemon API with Multi-Tier Resilience
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     setIsLoading(true);
@@ -164,62 +164,63 @@ export default function App() {
     try {
       let queryParts = [];
       const cleanQuery = searchQuery.trim().replace(/[^a-zA-Z0-9 -]/g, '');
-      if (cleanQuery) {
-        queryParts.push(`name:"${cleanQuery}"`);
-      }
-      if (selectedType) {
-        queryParts.push(`types:"${selectedType}"`);
-      }
+      if (cleanQuery) queryParts.push(`name:"${cleanQuery}"`);
+      if (selectedType) queryParts.push(`types:"${selectedType}"`);
       
       const qParam = queryParts.join(' ');
       const targetUrl = `https://api.pokemontcg.io/v2/cards?pageSize=24${qParam ? `&q=${encodeURIComponent(qParam)}` : ''}`;
       
-      let data;
-      
+      let data = null;
+
+      // Step 1: Direct Attempt
       try {
-        // Attempt 1: Direct fetch to the Pokémon API
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+        const response = await fetch(targetUrl);
+        if (response.ok) {
+          data = await response.json();
+        } else {
+          throw new Error(`Direct Status ${response.status}`);
+        }
+      } catch (err1) {
+        console.warn("Direct fetch failed, trying resilient proxy tier 1...");
         
-        const response = await fetch(targetUrl, { 
-          signal: controller.signal 
-        });
-        
-        clearTimeout(timeoutId);
-        if (!response.ok) throw new Error(`Status: ${response.status}`);
-        data = await response.json();
-        
-      } catch (primaryErr) {
-        console.warn("Direct API fetch failed. Attempting primary proxy...", primaryErr);
-        
+        // Step 2: AllOrigins JSON Wrapper (More robust against direct CORS blocks)
         try {
-          // Attempt 2: Primary CORS Proxy (corsproxy.io)
-          const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-          const proxyResponse = await fetch(proxyUrl);
+          const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+          const response = await fetch(proxyUrl);
+          const wrapper = await response.json();
+          if (wrapper && wrapper.contents) {
+            data = JSON.parse(wrapper.contents);
+          } else {
+            throw new Error("Invalid proxy response");
+          }
+        } catch (err2) {
+          console.warn("Proxy tier 1 failed, trying proxy tier 2...");
           
-          if (!proxyResponse.ok) throw new Error(`Proxy 1 status: ${proxyResponse.status}`);
-          data = await proxyResponse.json();
-          
-        } catch (secondaryErr) {
-          console.warn("Primary proxy failed. Attempting secondary proxy...", secondaryErr);
-          
-          // Attempt 3: Secondary CORS Proxy (allorigins)
-          const backupProxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-          const backupResponse = await fetch(backupProxyUrl);
-          
-          if (!backupResponse.ok) throw new Error(`Proxy 2 status: ${backupResponse.status}`);
-          data = await backupResponse.json();
+          // Step 3: Corsproxy.io
+          try {
+            const response = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
+            if (response.ok) {
+              data = await response.json();
+            } else {
+              throw new Error(`Proxy tier 2 failed: ${response.status}`);
+            }
+          } catch (err3) {
+            throw new Error("All connection methods exhausted.");
+          }
         }
       }
-      
-      setCards(data.data || []);
-      
-      if (data.data && data.data.length === 0) {
-        setError("No cards found. Try a different search.");
+
+      if (data && data.data) {
+        setCards(data.data);
+        if (data.data.length === 0) setError("No cards found. Try a different search.");
+      } else {
+        throw new Error("Data was received but format was invalid.");
       }
+
     } catch (err) {
-      console.error("All API fetch attempts failed:", err);
+      console.error("Comprehensive search failure:", err);
       
+      // Step 4: Final Fallback to local Mock Data so the user isn't stuck
       let filteredMocks = MOCK_CARDS;
       if (searchQuery) {
         filteredMocks = filteredMocks.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -229,7 +230,7 @@ export default function App() {
       }
       
       setCards(filteredMocks);
-      setError(`API connection issue (${err.message}). Showing sample data for now!`);
+      setError(`Connection issue (${err.message}). Showing sample cards instead.`);
     } finally {
       setIsLoading(false);
     }
