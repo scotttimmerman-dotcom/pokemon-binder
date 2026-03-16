@@ -21,6 +21,7 @@ const firebaseEnv = {
   appId: typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_FIREBASE_APP_ID : ''
 };
 const geminiEnvKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : '';
+const pokemonEnvKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_POKEMON_API_KEY : '';
 
 // Support both the Canvas sandbox preview and the Vercel live app
 const firebaseConfig = isSandbox ? JSON.parse(__firebase_config) : firebaseEnv;
@@ -34,6 +35,7 @@ const sandboxAppId = typeof __app_id !== 'undefined' ? __app_id : undefined;
 const appId = sandboxAppId || 'pokemon-binder-app';
 
 // --- API Configurations ---
+const POKEMON_API_KEY = pokemonEnvKey;
 const GEMINI_API_KEY = isSandbox ? "" : geminiEnvKey;
 const GEMINI_URL = isSandbox 
   ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`
@@ -153,7 +155,7 @@ export default function App() {
     };
   }, [user]);
 
-  // 3. Search Pokemon API
+  // 3. Search Pokemon API with Proxy Fallback
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     setIsLoading(true);
@@ -172,22 +174,40 @@ export default function App() {
       const qParam = queryParts.join(' ');
       const targetUrl = `https://api.pokemontcg.io/v2/cards?pageSize=24${qParam ? `&q=${encodeURIComponent(qParam)}` : ''}`;
       
-      // CORS FIX: Simple fetch with no headers
-      const response = await fetch(targetUrl);
+      let data;
       
-      if (!response.ok) {
-        throw new Error(`API returned status: ${response.status}`);
+      try {
+        // Attempt 1: Direct fetch to the Pokémon API
+        const headers = POKEMON_API_KEY ? { 'X-Api-Key': POKEMON_API_KEY } : {};
+        const response = await fetch(targetUrl, { headers });
+        
+        if (!response.ok) {
+          throw new Error(`Direct fetch status: ${response.status}`);
+        }
+        data = await response.json();
+        
+      } catch (primaryErr) {
+        console.warn("Direct API fetch blocked. Attempting secure proxy routing...", primaryErr);
+        
+        // Attempt 2: CORS Proxy to bypass aggressive browser blockers
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+        const proxyResponse = await fetch(proxyUrl);
+        
+        if (!proxyResponse.ok) {
+          throw new Error(`Proxy fetch status: ${proxyResponse.status}`);
+        }
+        data = await proxyResponse.json();
       }
       
-      const data = await response.json();
       setCards(data.data || []);
       
       if (data.data && data.data.length === 0) {
         setError("No cards found. Try a different search.");
       }
     } catch (err) {
-      console.warn("Live API fetch failed. Using local sample data for testing.", err);
+      console.error("Both Direct and Proxy API fetches failed:", err);
       
+      // Attempt 3: Final Fallback to Mock Data
       let filteredMocks = MOCK_CARDS;
       if (searchQuery) {
         filteredMocks = filteredMocks.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -201,7 +221,8 @@ export default function App() {
       if (filteredMocks.length === 0) {
         setError("Live connection failed, and no sample cards matched your search criteria.");
       } else {
-        setError("Live API connection failed. Showing sample data for testing!");
+        // Now dynamically showing you exactly what error caused it to fail
+        setError(`API blocked (${err.message}). Showing sample data for testing!`);
       }
     } finally {
       setIsLoading(false);
