@@ -51,6 +51,20 @@ const MOCK_CARDS = [
   { id: 'swsh1-141', name: 'Snorlax', set: { name: 'Sword & Shield' }, images: { small: 'https://images.pokemontcg.io/swsh1/141.png', large: 'https://images.pokemontcg.io/swsh1/141_hires.png' }, tcgplayer: { prices: { normal: { market: 12.00 } } }, types: ['Colorless'] },
 ];
 
+// Helper for strict timeouts to prevent "endless spinning"
+const fetchWithTimeout = async (url, options = {}, timeout = 4000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState('search'); 
@@ -124,7 +138,7 @@ export default function App() {
     };
   }, [user]);
 
-  // Robust Search Logic
+  // Robust Search Logic with Multi-Tier Resilience and Timeouts
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     setIsLoading(true);
@@ -138,34 +152,46 @@ export default function App() {
     const qParam = queryParts.join(' ');
     const targetUrl = `https://api.pokemontcg.io/v2/cards?pageSize=24${qParam ? `&q=${encodeURIComponent(qParam)}` : ''}`;
     
-    try {
-      // Step 1: Use a JSON Wrapper Proxy (AllOrigins) 
-      // This is the most reliable way to bypass CORS in a live browser app.
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-      const response = await fetch(proxyUrl);
-      
-      if (!response.ok) throw new Error("Connection failed");
-      
-      const wrapper = await response.json();
-      const data = JSON.parse(wrapper.contents);
+    let resultData = null;
 
-      if (data && data.data) {
-        setCards(data.data);
-        if (data.data.length === 0) setError("No cards found for that search.");
-      } else {
-        throw new Error("Invalid format");
-      }
-    } catch (err) {
-      console.error("Live fetch failed:", err);
-      
-      // Step 2: Graceful Mock Fallback
+    // Level 1: Direct Fetch
+    try {
+      const res = await fetchWithTimeout(targetUrl, {}, 3000);
+      if (res.ok) resultData = await res.json();
+    } catch (e) { console.warn("Direct fetch failed."); }
+
+    // Level 2: JSON Wrapper Proxy (AllOrigins) - Most reliable for CORS
+    if (!resultData) {
+      try {
+        const res = await fetchWithTimeout(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, {}, 4000);
+        if (res.ok) {
+          const wrapper = await res.json();
+          resultData = JSON.parse(wrapper.contents);
+        }
+      } catch (e) { console.warn("Primary proxy failed."); }
+    }
+
+    // Level 3: Corsproxy.io
+    if (!resultData) {
+      try {
+        const res = await fetchWithTimeout(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {}, 4000);
+        if (res.ok) resultData = await res.json();
+      } catch (e) { console.warn("Secondary proxy failed."); }
+    }
+
+    if (resultData && resultData.data) {
+      setCards(resultData.data);
+      if (resultData.data.length === 0) setError("No cards found for that search.");
+      setIsLoading(false);
+    } else {
+      // Level 4: Mock Fallback
+      console.error("All live sources failed. Using mock data.");
       let filteredMocks = MOCK_CARDS;
       if (searchQuery) filteredMocks = filteredMocks.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()));
       if (selectedType) filteredMocks = filteredMocks.filter(c => c.types.includes(selectedType));
       
       setCards(filteredMocks);
-      setError("API connection issue. Showing sample cards for now!");
-    } finally {
+      setError("Live API unreachable. Showing sample collection for now!");
       setIsLoading(false);
     }
   };
